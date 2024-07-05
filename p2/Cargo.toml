@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+bit-vec = "0.7.0"
 hex-literal = "0.4.1"
 log = "0.4.22"
 plonky2x = { git = "https://github.com/succinctlabs/succinctx.git", tag = "v1.1.0" }

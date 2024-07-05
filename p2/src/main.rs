@@ -1,6 +1,7 @@
 // Following the example from 
 // https://github.com/succinctlabs/succinctx/blob/main/plonky2x/core/examples/field.rs
 
+use bit_vec::BitVec;
 use hex_literal::hex;
 use plonky2x::prelude::{ByteVariable, CircuitBuilder, DefaultParameters};
 
@@ -28,6 +29,10 @@ fn main() {
     let (proof, output) = circuit.prove(&input);
     circuit.verify(&proof, &input, &output);
 
-    let hash = output.read_all();
-    println!("{:?}", hash.as_slice());
+    let output = output.read_all();
+    let mut hash = BitVec::with_capacity(256);
+    output.iter().for_each(|f| hash.push(f.0 != 0));
+    let hash = hash.to_bytes();
+
+    assert_eq!(&hash, &hex!("266ced7e1b0899f39771c0a9bf1e6cdfb282c7719d44592e2f877cda60099b2a"));
 }
