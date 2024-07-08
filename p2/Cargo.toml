@@ -9,6 +9,6 @@ hex-literal = "0.4.1"
 log = "0.4.22"
 rand = "0.8.5"
 sha2 = "0.10.8"
-plonky2_ecdsa = { git = "https://github.com/ultrasoundlabs/plonky2-ecdsa-with-sha256.git" }
+plonky2_ecdsa = { git = "https://github.com/ultrasoundlabs/plonky2-ecdsa-with-sha256.git", rev = "f2da1e16fc68f5806f47041277732cd68184cfb7" }
 num = { version = "0.4.0", default-features = false }
 plonky2 = { version = "0.2.1", default-features = true }
