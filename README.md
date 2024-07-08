@@ -1,2 +1,2 @@
 # untron-circuits
-ZK circuits for Untron.finance
+Repo for the research of the proof systems to figure out which ones fit best for Untron.finance
