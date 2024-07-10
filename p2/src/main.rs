@@ -4,6 +4,7 @@ use num::bigint::BigUint;
 use plonky2::{
     field::{
         secp256k1_scalar::Secp256K1Scalar,
+        secp256k1_base::Secp256K1Base,
         types::{Field},
     },
     iop::witness::{
@@ -31,6 +32,7 @@ use plonky2_ecdsa::{
         CircuitBuilderHash,
     },
 };
+use sha2::{Digest, Sha256};
 
 fn main() {
     // Set circuit config for ECC
@@ -46,7 +48,7 @@ fn main() {
     
     // Input block header
     let header = hex!("08b0e49e9a853212206ef000a8a81ddae3419c56f9b1ba01ae1215aeffbb3865f9e8b73495c29e41e41a200000000003bffa8b92248ec47500deaedcbf8c3e20bdcaa058e5716b858ddb50388cf5ff1d4a15412a4d700c196a78f8ff7f0bf17d93fe6018396d2e501e");
-    let mut header_bytes = Vec::new();
+    /*let mut header_bytes = Vec::new();
     for i in 0..header.len() {
         header_bytes.push(header[i]);
     }
@@ -62,17 +64,22 @@ fn main() {
     let msg_hash_field_target: NonNativeTarget<Secp256K1Scalar> =
         builder.reduce(&sha256_output_target);
     
+    println!("Sha output target: {:?}", sha256_output_target);
+    println!("Msg hash field target: {:?}", msg_hash_field_target);
+
     // Set up witness using the block header as input (provides initial values for virtual targets!)
     pw.set_sha256_input_target(&hash_input_target, &header_bytes);
-    
-    // Use when testing only ECDSA verification
-    /*let msg_hash_field_target: NonNativeTarget<Secp256K1Scalar> = builder.constant_nonnative(
-        Secp256K1Scalar::from_noncanonical_biguint(
-            BigUint::from_bytes_be(&hex!("b81286a92ee17057441182938c4c74113eb7bb580c3e1ad2d644060318208531"))
-        ),
-    );*/
 
-    // Create virtual input target for pk
+*/
+    // hash msg natively
+    let mut hasher = Sha256::new();
+    hasher.update(header);
+    let hash = hasher.finalize().to_vec();
+    let msg = Secp256K1Scalar::from_noncanonical_biguint(BigUint::from_bytes_be(&hash));
+
+    println!("Msg: {:?}", msg);
+    
+    let msg_hash_field_target: NonNativeTarget<Secp256K1Scalar> = builder.constant_nonnative(msg);
     let pk_target: ECDSAPublicKeyTarget<Secp256K1> = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
 
     // Create virtual input targets for r and s
@@ -94,17 +101,21 @@ fn main() {
 
     let structured_public_key = ECDSAPublicKey::<Secp256K1> {
         0: AffinePoint {
-            x: <Secp256K1 as Curve>::BaseField::from_noncanonical_biguint(BigUint::from_bytes_be(&public_key[0..32])),
-            y: <Secp256K1 as Curve>::BaseField::from_noncanonical_biguint(BigUint::from_bytes_be(&public_key[32..64])),
+            x: Secp256K1Base::from_noncanonical_biguint(BigUint::from_bytes_be(&public_key[0..32])),
+            y: Secp256K1Base::from_noncanonical_biguint(BigUint::from_bytes_be(&public_key[32..64])),
             zero: false,
         }
     };
     let structured_signature = ECDSASignature::<Secp256K1> {
-        r: <Secp256K1 as Curve>::ScalarField::from_noncanonical_biguint(BigUint::from_bytes_be(&signature[0..32])),
-        s: <Secp256K1 as Curve>::ScalarField::from_noncanonical_biguint(BigUint::from_bytes_be(&signature[32..64])),
+        r: Secp256K1Scalar::from_noncanonical_biguint(BigUint::from_bytes_be(&signature[0..32])),
+        s: Secp256K1Scalar::from_noncanonical_biguint(BigUint::from_bytes_be(&signature[32..64])),
     };
+
+    println!("structured_public_key: {:?}", structured_public_key);
+    println!("structured_signature: {:?}", structured_signature);
     
     // Set up witness using the public key and signature as targets
+    // pw.set_nonative_target(&msg_hash_field_target, &msg);
     pw.set_ecdsa_pk_target(&pk_target, &structured_public_key);
     pw.set_ecdsa_sig_target(&sig_target, &structured_signature);
     
