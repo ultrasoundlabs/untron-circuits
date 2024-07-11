@@ -24,7 +24,7 @@ use plonky2_ecdsa::{
     },
     gadgets::{
         curve::{CircuitBuilderCurve},
-        ecdsa::{verify_message_circuit, ECDSAPublicKeyTarget, ECDSASignatureTarget},
+        ecdsa::{verify_message_circuit, ECDSAPublicKeyTarget, ECDSASignatureTarget, WitnessECDSA},
         nonnative::{CircuitBuilderNonNative, NonNativeTarget},
     },
     hash::{
@@ -139,38 +139,4 @@ fn main() {
     let _verified = data.verify(proof).is_ok();
     let duration = start.elapsed();
     println!("Verification duration: {:?}", duration);
-}
-
-
-use plonky2::field::types::PrimeField64;
-use plonky2::iop::witness::Witness;
-use plonky2_ecdsa::nonnative::biguint::WitnessBigUint;
-use plonky2::field::types::PrimeField;
-
-pub trait WitnessECDSA<F: Field + PrimeField64, C: Curve>: Witness<F> {
-    fn set_ecdsa_pk_target(&mut self, target: &ECDSAPublicKeyTarget<C>, value: &ECDSAPublicKey<C>);
-    fn set_ecdsa_sig_target(&mut self, target: &ECDSASignatureTarget<C>, value: &ECDSASignature<C>);
-}
-
-impl<T: Witness<F>, F: Field + PrimeField64, C: Curve> WitnessECDSA<F, C> for T {
-    fn set_ecdsa_pk_target(&mut self, target: &ECDSAPublicKeyTarget<C>, pk: &ECDSAPublicKey<C>) {
-        /*
-        pub struct ECDSAPublicKeyTarget<C: Curve> {
-            pub point: AffinePointTarget<C>,
-        }
-        */
-        self.set_biguint_target(&target.0.x.value, &pk.0.x.to_canonical_biguint());
-        self.set_biguint_target(&target.0.y.value, &pk.0.y.to_canonical_biguint());
-    }
-
-    fn set_ecdsa_sig_target(&mut self, target: &ECDSASignatureTarget<C>, sig: &ECDSASignature<C>) {
-        /*
-        pub struct ECDSASignatureTarget<C: Curve> {
-            pub r: NonNativeTarget<C::ScalarField>,
-            pub s: NonNativeTarget<C::ScalarField>,
-        }
-        */
-        self.set_biguint_target(&target.r.value, &sig.r.to_canonical_biguint());
-        self.set_biguint_target(&target.s.value, &sig.s.to_canonical_biguint());
-    }
 }
