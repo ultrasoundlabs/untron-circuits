@@ -166,8 +166,8 @@ func main() {
 	}
 
 	pubx, puby := new(big.Int), new(big.Int)
-	pubx.SetBytes(blocks[0].PrevBlockID[:32])
-	puby.SetBytes(blocks[0].PrevBlockID[32:64])
+	pubx.SetBytes(blocks[0].PublicKey[:32])
+	puby.SetBytes(blocks[0].PublicKey[32:64])
 
 	circuit := tronBlockCircuit{
 		NewBlockID:  [32]byte(blocks[0].NewBlockID),
