@@ -220,6 +220,7 @@ func main() {
 		panic(err)
 	}
 	println("Witness assigned")
+	fmt.Println("witness", witness)
 
 	circuit := tronBlockCircuit{
 		// This is neccessary to avoid uninitialized slice error
@@ -253,7 +254,8 @@ func main() {
 
 	// 3. Proof verification
 	println("Verifying proof...")
-	err = groth16.Verify(proof, vk, witness)
+	publicWitness, _ := witness.Public()
+	err = groth16.Verify(proof, vk, publicWitness)
 	if err != nil {
 		panic(err)
 	}
