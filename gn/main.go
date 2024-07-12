@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-
+	
+	sigEcdsa "github.com/consensys/gnark-crypto/ecc/bn254/ecdsa"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
@@ -111,12 +112,14 @@ func (c *sha2Circuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
+
 	uapi, err := uints.New[uints.U32](api)
 	if err != nil {
 		return err
 	}
 	h.Write(c.In)
 	res := h.Sum()
+
 	if len(res) != 32 {
 		return fmt.Errorf("not 32 bytes")
 	}
@@ -127,35 +130,33 @@ func (c *sha2Circuit) Define(api frontend.API) error {
 }
 
 type tronBlockCircuit struct {
-	NewBlockID  [32]byte
-	PrevBlockID [32]byte
+	//NewBlockID  [32]byte
+	//PrevBlockID [32]byte
 	PublicKey   ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]
 	RawData     []byte
-	Signature   [64]byte
-	TxRoot      [32]byte
+	Signature   ecdsa.Signature[emulated.Secp256k1Fr]
+	//TxRoot      [32]byte
 }
 
 func (c *tronBlockCircuit) Define(api frontend.API) error {
+	// Expected hash
 	hash := sha256.Sum256(c.RawData)
 
+	// Create circuit that checks that sha256(In) == Expected
 	hashCircuit := sha2Circuit{
 		In:       uints.NewU8Array(c.RawData),
 		Expected: [32]uints.U8(uints.NewU8Array(hash[:])),
 	}
 	hashCircuit.Define(api)
 
-	r, s, m := new(big.Int), new(big.Int), new(big.Int)
-	r.SetBytes(c.Signature[:32])
-	s.SetBytes(c.Signature[32:])
-	m.SetBytes(hash[:])
+	// Use m as a message in the field of the curve
+	msg := emulated.ValueOf[emulated.Secp256k1Fr](sigEcdsa.HashToInt(hash[:]))
 
-	sig := ecdsa.Signature[emulated.Secp256k1Fr]{
-		R: emulated.ValueOf[emulated.Secp256k1Fr](r),
-		S: emulated.ValueOf[emulated.Secp256k1Fr](s),
-	}
-	msg := emulated.ValueOf[emulated.Secp256k1Fr](m)
+	// Check that msg == hash % N
+	// N := ecdsa.GetCurveOrder(api, sw_emulated.GetSecp256k1Params())
+	// api.AssertIsEqual(msg, emulated.ValueOf[emulated.Secp256k1Fr](m.Mod(m, N)))
 
-	c.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &msg, &sig)
+	c.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &msg, &c.Signature)
 	return nil
 }
 
@@ -169,39 +170,62 @@ func main() {
 	pubx.SetBytes(blocks[0].PublicKey[:32])
 	puby.SetBytes(blocks[0].PublicKey[32:64])
 
-	circuit := tronBlockCircuit{
-		NewBlockID:  [32]byte(blocks[0].NewBlockID),
-		PrevBlockID: [32]byte(blocks[0].PrevBlockID),
+	r, s := new(big.Int), new(big.Int)
+	r.SetBytes(blocks[0].Signature[:32])
+	s.SetBytes(blocks[0].Signature[32:64])
+
+	assignment := tronBlockCircuit{
+		//NewBlockID:  [32]byte(blocks[0].NewBlockID),
+		//PrevBlockID: [32]byte(blocks[0].PrevBlockID),
 		PublicKey: ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]{
 			X: emulated.ValueOf[emulated.Secp256k1Fp](pubx),
 			Y: emulated.ValueOf[emulated.Secp256k1Fp](puby),
 		},
-		RawData:   blocks[0].RawData,
-		Signature: [64]byte(blocks[0].Signature),
-		TxRoot:    [32]byte(blocks[0].TxRoot),
+		RawData: blocks[0].RawData,
+		Signature: ecdsa.Signature[emulated.Secp256k1Fr]{
+			R: emulated.ValueOf[emulated.Secp256k1Fr](r),
+			S: emulated.ValueOf[emulated.Secp256k1Fr](s),
+		},
+		//TxRoot:    [32]byte(blocks[0].TxRoot),
 	}
 
-	witness, err := frontend.NewWitness(&circuit, ecc.BN254.ScalarField())
+	println("Assigning witness...")
+	witness, err := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 	if err != nil {
 		panic(err)
 	}
+	println("Witness assigned")
 
+	var circuit tronBlockCircuit
+	println("Compiling circuit...")
 	cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 	if err != nil {
 		panic(err)
 	}
+	println("Circuit compiled")
 
+	println("Setting up groth16...")
 	// 1. One time setup
-	pk, _, err := groth16.Setup(cs)
+	pk, vk, err := groth16.Setup(cs)
 	if err != nil {
 		panic(err)
 	}
+	println("Groth16 setup")
 
-	println("compilation + setup successful")
 
 	// 2. Proof creation
-	_, err = groth16.Prove(cs, pk, witness)
+	println("Creating proof...")
+	proof, err := groth16.Prove(cs, pk, witness)
 	if err != nil {
 		panic(err)
 	}
+	println("Proof created")
+
+	// 3. Proof verification
+	println("Verifying proof...")
+	err = groth16.Verify(proof, vk, witness)
+	if err != nil {
+		panic(err)
+	}
+	println("Proof verified")
 }
