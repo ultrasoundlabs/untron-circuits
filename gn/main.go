@@ -132,50 +132,67 @@ func (c *sha2Circuit) Define(api frontend.API) error {
 type tronBlockCircuit struct {
 	//NewBlockID  [32]byte
 	//PrevBlockID [32]byte
-	PublicKey   ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]
-	RawData     []uints.U8
-	Signature   ecdsa.Signature[emulated.Secp256k1Fr]
+	PublicKey   		ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]
+	RawData 			[]uints.U8 `gnark:",public"`
+	Hash		 		[32]uints.U8
+	Message	 			emulated.Element[emulated.Secp256k1Fr]
+	Signature   		ecdsa.Signature[emulated.Secp256k1Fr]
 	//TxRoot      [32]byte
 }
 
 func (c *tronBlockCircuit) Define(api frontend.API) error {
-	// Expected hash
-	fmt.Println("RawData: ", c.RawData)
-	fmt.Println("PublicKey: ", c.PublicKey)
-	fmt.Println("Signature: ", c.Signature)
+	// TODO: Check if c.PublicKey is in a list of fixed values
+	// To check if PK is in a list of values:
+	// https://github.com/Consensys/gnark/discussions/1070
 
-	//rawDataBytes := make([]byte, len(c.RawData))
-	//for i, u8 := range c.RawData {
-	//	rawDataBytes[i] = u8.Val.(byte)
-	//}
+	// Print all the values
+	fmt.Println("PK: ", c.PublicKey)
+	fmt.Println("RD: ", c.RawData)
+	fmt.Println("HASH: ", c.Hash)
+	fmt.Println("MSG: ", c.Message)
+	fmt.Println("SIG: ", c.Signature)
 
-	// Hardcode the actual value of the hash until conversion from c.RawData can be done
-	rawDataBytes, err := hex.DecodeString("08b0e49e9a853212206ef000a8a81ddae3419c56f9b1ba01ae1215aeffbb3865f9e8b73495c29e41e41a200000000003bffa8b92248ec47500deaedcbf8c3e20bdcaa058e5716b858ddb50388cf5ff1d4a15412a4d700c196a78f8ff7f0bf17d93fe6018396d2e501e")
-	if err != nil {
-		return err
-	}
-	hash := sha256.Sum256(rawDataBytes)
-
-	// Create circuit that checks that sha256(In) == Expected
+	// Create circuit that checks that sha256(c.RawData) == c.Hash
 	hashCircuit := sha2Circuit{
 		In:       c.RawData,
-		Expected: [32]uints.U8(uints.NewU8Array(hash[:])),
+		Expected: c.Hash,
 	}
 	hashCircuit.Define(api)
 
-	// Use m as a message in the field of the curve
-	msg := emulated.ValueOf[emulated.Secp256k1Fr](sigEcdsa.HashToInt(hash[:]))
-	// 266ced7e1b0899f39771c0a9bf1e6cdfb282c7719d44592e2f877cda60099b2a
-	// Print hash as hex
-	fmt.Println("hash: ", hex.EncodeToString(hash[:]))
-	fmt.Println("hash to int: ", sigEcdsa.HashToInt(hash[:]))
-	fmt.Println("msg: ", msg)
+	// TODO: Check that msg == hash % N
+	/* 
+		// HashToInt converts a hash value to an integer. Per FIPS 186-4, Section 6.4,
+		// we use the left-most bits of the hash to match the bit-length of the order of
+		// the curve. This also performs Step 5 of SEC 1, Version 2.0, Section 4.1.3.
+		func HashToInt(hash []byte) *big.Int {
+			if len(hash) > sizeFr {
+				hash = hash[:sizeFr]
+			}
+			ret := new(big.Int).SetBytes(hash)
+			excess := ret.BitLen() - sizeFrBits
+			if excess > 0 {
+				// func (z *Int) Rsh(x *Int, n uint) *Int
+				// Rsh sets z = x >> n and returns z.
+				ret.Rsh(ret, uint(excess))
+			}
+			return ret
+		}
+	*/
+	// https://pkg.go.dev/github.com/consensys/gnark/frontend#API
+	//hashInt := api.FromBinary(api.ToBinary(circuit.Hash))
+	//bitLength := api.FieldBitLen(hashInt)
+	//excess := api.Sub(bitLength, fr.Bits)
 
-	// Check that msg == hash % N
-	// N := ecdsa.GetCurveOrder(api, sw_emulated.GetSecp256k1Params())
-	// api.AssertIsEqual(msg, emulated.ValueOf[emulated.Secp256k1Fr](m.Mod(m, N)))
+	//shifted := hashInt
+	//if excess > 0 {
+	//	shifted = api.Rsh(hashInt, uint(excess))
+	//}
 
-	c.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &msg, &c.Signature)
+	// Enforce the constraint: Message = shifted
+	//api.AssertIsEqual(circuit.Message, shifted)
+
+
+	c.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &c.Message, &c.Signature)
 	return nil
 }
 
@@ -194,6 +211,10 @@ func main() {
 	s.SetBytes(blocks[0].Signature[32:64])
 
 	input := blocks[0].RawData
+	hash := sha256.Sum256(input)
+	msg := emulated.ValueOf[emulated.Secp256k1Fr](sigEcdsa.HashToInt(hash[:]))
+
+	fmt.Println("Hash as hex: ", hex.EncodeToString(hash[:]))
 
 	assignment := tronBlockCircuit{
 		//NewBlockID:  [32]byte(blocks[0].NewBlockID),
@@ -203,6 +224,8 @@ func main() {
 			Y: emulated.ValueOf[emulated.Secp256k1Fp](puby),
 		},
 		RawData: uints.NewU8Array(input),
+		Hash: [32]uints.U8(uints.NewU8Array(hash[:])),
+		Message: msg,
 		Signature: ecdsa.Signature[emulated.Secp256k1Fr]{
 			R: emulated.ValueOf[emulated.Secp256k1Fr](r),
 			S: emulated.ValueOf[emulated.Secp256k1Fr](s),
@@ -212,6 +235,8 @@ func main() {
 
 	fmt.Println("assignment PK: ", assignment.PublicKey)
 	fmt.Println("assignment RD: ", assignment.RawData)
+	fmt.Println("assignment HASH: ", assignment.Hash)
+	fmt.Println("assignment MSG: ", assignment.Message)
 	fmt.Println("assignment SIG: ", assignment.Signature)
 
 	println("Assigning witness...")
@@ -220,7 +245,6 @@ func main() {
 		panic(err)
 	}
 	println("Witness assigned")
-	fmt.Println("witness", witness)
 
 	circuit := tronBlockCircuit{
 		// This is neccessary to avoid uninitialized slice error
