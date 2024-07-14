@@ -10,14 +10,15 @@ import (
 	
 	sigEcdsa "github.com/consensys/gnark-crypto/ecc/secp256k1/ecdsa"
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
+	//"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
+	//"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/std/algebra/emulated/sw_emulated"
 	"github.com/consensys/gnark/std/hash/sha2"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/consensys/gnark/std/math/uints"
 	"github.com/consensys/gnark/std/signature/ecdsa"
+	"github.com/consensys/gnark/test"
 )
 
 type Block struct {
@@ -107,7 +108,7 @@ type sha2Circuit struct {
 	Expected [32]uints.U8
 }
 
-func (c *sha2Circuit) Define(api frontend.API) error {
+func (circuit *sha2Circuit) Define(api frontend.API) error {
 	h, err := sha2.New(api)
 	if err != nil {
 		return err
@@ -117,14 +118,14 @@ func (c *sha2Circuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
-	h.Write(c.In)
+	h.Write(circuit.In)
 	res := h.Sum()
 
 	if len(res) != 32 {
 		return fmt.Errorf("not 32 bytes")
 	}
-	for i := range c.Expected {
-		uapi.ByteAssertEq(c.Expected[i], res[i])
+	for i := range circuit.Expected {
+		uapi.ByteAssertEq(circuit.Expected[i], res[i])
 	}
 	return nil
 }
@@ -140,15 +141,15 @@ type tronBlockCircuit struct {
 	//TxRoot      [32]byte
 }
 
-func (c *tronBlockCircuit) Define(api frontend.API) error {
-	// TODO: Check if c.PublicKey is in a list of fixed values
+func (circuit *tronBlockCircuit) Define(api frontend.API) error {
+	// TODO: Check if circuit.PublicKey is in a list of fixed values
 	// To check if PK is in a list of values:
 	// https://github.com/Consensys/gnark/discussions/1070
 
-	// Create circuit that checks that sha256(c.RawData) == c.Hash
+	// Create circuit that checks that sha256(circuit.RawData) == circuit.Hash
 	hashCircuit := sha2Circuit{
-		In:       c.RawData,
-		Expected: c.Hash,
+		In:       circuit.RawData,
+		Expected: circuit.Hash,
 	}
 	hashCircuit.Define(api)
 
@@ -164,6 +165,8 @@ func (c *tronBlockCircuit) Define(api frontend.API) error {
 			ret := new(big.Int).SetBytes(hash)
 			excess := ret.BitLen() - sizeFrBits
 			if excess > 0 {
+				// func (z *Int) Rsh(x *Int, n uint) *Int
+				// Rsh sets z = x >> n and returns z.
 				ret.Rsh(ret, uint(excess))
 			}
 			return ret
@@ -183,7 +186,7 @@ func (c *tronBlockCircuit) Define(api frontend.API) error {
 	//api.AssertIsEqual(circuit.Message, shifted)
 
 
-	c.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &c.Message, &c.Signature)
+	circuit.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &circuit.Message, &circuit.Signature)
 	return nil
 }
 
@@ -193,50 +196,22 @@ func main() {
 		panic(err)
 	}
 
-	// One time compile + setup
-	circuit := tronBlockCircuit{
-		// This is neccessary to avoid uninitialized slice error
-		// See: https://github.com/Consensys/gnark/issues/970
-		RawData: make([]uints.U8, 105),
-	}
-
-	println("Compiling circuit...")
-	cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-	if err != nil {
-		panic(err)
-	}
-	println("Circuit compiled")
-
-	println("Setting up groth16...")
-	// 1. One time setup
-	pk, vk, err := groth16.Setup(cs)
-	if err != nil {
-		panic(err)
-	}
-	println("Groth16 setup")
-
 	for _, block := range blocks {
-		// TODO: We should somehow check that block[N].PrevBlockID == block[N-1].NewBlockID
-		
 		pubx, puby := new(big.Int), new(big.Int)
 		pubx.SetBytes(block.PublicKey[:32])
 		puby.SetBytes(block.PublicKey[32:64])
-	
+
 		r, s := new(big.Int), new(big.Int)
 		r.SetBytes(block.Signature[:32])
 		s.SetBytes(block.Signature[32:64])
-	
+
 		input := block.RawData
 		hash := sha256.Sum256(input)
 		msg := sigEcdsa.HashToInt(hash[:])
-	
-		fmt.Println("Input as hex: ", hex.EncodeToString(input))
+
 		fmt.Println("Hash as hex: ", hex.EncodeToString(hash[:]))
-		fmt.Println("Msg as hex: ", hex.EncodeToString(msg.Bytes()))
 
-		fmt.Println("len input: ", len(input))
-
-		assignment := tronBlockCircuit{
+		assignment := &tronBlockCircuit{
 			//NewBlockID:  [32]byte(block.NewBlockID),
 			//PrevBlockID: [32]byte(block.PrevBlockID),
 			PublicKey: ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]{
@@ -252,35 +227,48 @@ func main() {
 			},
 			//TxRoot:    [32]byte(block.TxRoot),
 		}
-	
+
 		fmt.Println("assignment PK: ", assignment.PublicKey)
 		fmt.Println("assignment RD: ", assignment.RawData)
 		fmt.Println("assignment HASH: ", assignment.Hash)
 		fmt.Println("assignment MSG: ", assignment.Message)
 		fmt.Println("assignment SIG: ", assignment.Signature)
-	
-		println("Assigning witness...")
-		witness, err := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+
+		circuit := &tronBlockCircuit{
+			// This is neccessary to avoid uninitialized slice error
+			// See: https://github.com/Consensys/gnark/issues/970
+			RawData: make([]uints.U8, len(105)),
+		}
+
+		err = test.IsSolved(circuit, assignment, ecc.BN254.ScalarField())
 		if err != nil {
 			panic(err)
 		}
-		println("Witness assigned")
-	
-		// 2. Proof creation
-		println("Creating proof...")
-		proof, err := groth16.Prove(cs, pk, witness)
-		if err != nil {
-			panic(err)
-		}
-		println("Proof created")
-	
-		// 3. Proof verification
-		println("Verifying proof...")
-		publicWitness, _ := witness.Public()
-		err = groth16.Verify(proof, vk, publicWitness)
-		if err != nil {
-			panic(err)
-		}
-		println("Proof verified")
 	}
+
+	/*println("Setting up groth16...")
+	// 1. One time setup
+	pk, vk, err := groth16.Setup(cs)
+	if err != nil {
+		panic(err)
+	}
+	println("Groth16 setup")
+
+
+	// 2. Proof creation
+	println("Creating proof...")
+	proof, err := groth16.Prove(cs, pk, witness)
+	if err != nil {
+		panic(err)
+	}
+	println("Proof created")
+
+	// 3. Proof verification
+	println("Verifying proof...")
+	publicWitness, _ := witness.Public()
+	err = groth16.Verify(proof, vk, publicWitness)
+	if err != nil {
+		panic(err)
+	}
+	println("Proof verified")*/
 }
