@@ -9,6 +9,7 @@ import (
 	"os"
 	
 	sigEcdsa "github.com/consensys/gnark-crypto/ecc/secp256k1/ecdsa"
+	"github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
 	"github.com/consensys/gnark-crypto/ecc"
 	//"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
@@ -153,7 +154,6 @@ func (circuit *tronBlockCircuit) Define(api frontend.API) error {
 	}
 	hashCircuit.Define(api)
 
-	// TODO: Check that msg == hash % N
 	/* 
 		// HashToInt converts a hash value to an integer. Per FIPS 186-4, Section 6.4,
 		// we use the left-most bits of the hash to match the bit-length of the order of
@@ -173,18 +173,29 @@ func (circuit *tronBlockCircuit) Define(api frontend.API) error {
 		}
 	*/
 	// https://pkg.go.dev/github.com/consensys/gnark/frontend#API
-	//hashInt := api.FromBinary(api.ToBinary(circuit.Hash))
-	//bitLength := api.FieldBitLen(hashInt)
-	//excess := api.Sub(bitLength, fr.Bits)
+	fmt.Println("bits: ", fr.Bits)
+	
+	// Check the conversion from hash to integer for secp256k1 signature verification
+	// https://github.com/Consensys/gnark-crypto/blob/master/ecc/secp256k1/ecdsa/ecdsa.go#L107
+	varHash := make([]frontend.Variable, len(circuit.Hash))
+	for i, s := range circuit.Hash {
+		varHash[i] = s.Val
+	}
+	// Since sizeFr = 32 bytes and sha256 is 32 bytes then we can skip the check for len(hash) > sizeFr
+	fmt.Println("varHash: ", varHash)
 
-	//shifted := hashInt
-	//if excess > 0 {
-	//	shifted = api.Rsh(hashInt, uint(excess))
-	//}
+	// Since the max output of sha 256 would be 256 bits of 1s which can be expressed in 256 bits
+	// then therefore when substracting to sizeFrBits = 256, in the worst case we would get excess := 0
+	// But else this would always be negative, so we can also ignore that excess check
 
-	// Enforce the constraint: Message = shifted
-	//api.AssertIsEqual(circuit.Message, shifted)
+	// We only need to check this:
+	// circuit.Message := new(big.Int).SetBytes(circuit.Hash)
 
+	// Enforce the constraint:
+	//api.AssertIsEqual(circuit.Message, hashToInt(circuit.Hash))
+
+	// Note: The issue that we had before was that sigEcdsa.HashToInt had sizeFrBits = 254 (for bn254 curve) and therefore
+	// the excess was positive when it shouldnt be because we were actually doing a ecdsa verify in secp256k1!
 
 	circuit.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &circuit.Message, &circuit.Signature)
 	return nil
@@ -237,7 +248,7 @@ func main() {
 		circuit := &tronBlockCircuit{
 			// This is neccessary to avoid uninitialized slice error
 			// See: https://github.com/Consensys/gnark/issues/970
-			RawData: make([]uints.U8, len(105)),
+			RawData: make([]uints.U8, 105),
 		}
 
 		err = test.IsSolved(circuit, assignment, ecc.BN254.ScalarField())

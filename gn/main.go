@@ -276,6 +276,8 @@ func main() {
 	
 		// 3. Proof verification
 		println("Verifying proof...")
+		// Verifier
+		// https://github.com/Consensys/gnark/discussions/1188
 		publicWitness, _ := witness.Public()
 		err = groth16.Verify(proof, vk, publicWitness)
 		if err != nil {
