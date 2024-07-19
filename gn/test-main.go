@@ -9,7 +9,6 @@ import (
 	"os"
 	
 	sigEcdsa "github.com/consensys/gnark-crypto/ecc/secp256k1/ecdsa"
-	"github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
 	"github.com/consensys/gnark-crypto/ecc"
 	//"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
@@ -104,6 +103,29 @@ func deserializeBlocks(filename string) ([]DecodedBlock, error) {
 	return decodedBlocks, nil
 }
 
+// https://github.com/Consensys/gnark/discussions/802
+func byteArrayToLimbs(api frontend.API, array []uints.U8) ([]frontend.Variable, error) {
+	ret := make([]frontend.Variable, (len(array)+7)/8)
+	ap := make([]uints.U8, 8*len(ret)-len(array))
+	for i := range ap {
+		ap[i] = uints.NewU8(0)
+	}
+	array = append(ap, array...)
+	for i := range ret {
+		ret[len(ret)-1-i] = api.Add(
+			api.Mul(1<<0, array[8*i+7].Val),
+			api.Mul(1<<8, array[8*i+6].Val),
+			api.Mul(1<<16, array[8*i+5].Val),
+			api.Mul(1<<24, array[8*i+4].Val),
+			api.Mul(1<<32, array[8*i+3].Val),
+			api.Mul(1<<40, array[8*i+2].Val),
+			api.Mul(1<<48, array[8*i+1].Val),
+			api.Mul(1<<56, array[8*i+0].Val),
+		)
+	}
+	return ret, nil
+}
+
 type sha2Circuit struct {
 	In       []uints.U8
 	Expected [32]uints.U8
@@ -154,35 +176,22 @@ func (circuit *tronBlockCircuit) Define(api frontend.API) error {
 	}
 	hashCircuit.Define(api)
 
-	/* 
-		// HashToInt converts a hash value to an integer. Per FIPS 186-4, Section 6.4,
-		// we use the left-most bits of the hash to match the bit-length of the order of
-		// the curve. This also performs Step 5 of SEC 1, Version 2.0, Section 4.1.3.
-		func HashToInt(hash []byte) *big.Int {
-			if len(hash) > sizeFr {
-				hash = hash[:sizeFr]
-			}
-			ret := new(big.Int).SetBytes(hash)
-			excess := ret.BitLen() - sizeFrBits
-			if excess > 0 {
-				// func (z *Int) Rsh(x *Int, n uint) *Int
-				// Rsh sets z = x >> n and returns z.
-				ret.Rsh(ret, uint(excess))
-			}
-			return ret
-		}
-	*/
-	// https://pkg.go.dev/github.com/consensys/gnark/frontend#API
-	fmt.Println("bits: ", fr.Bits)
-	
-	// Check the conversion from hash to integer for secp256k1 signature verification
-	// https://github.com/Consensys/gnark-crypto/blob/master/ecc/secp256k1/ecdsa/ecdsa.go#L107
-	varHash := make([]frontend.Variable, len(circuit.Hash))
-	for i, s := range circuit.Hash {
-		varHash[i] = s.Val
+	// Options
+	// #1
+	// Convert Circuit.Hash to Limbs (little endian)
+	var HashLimbs, err = byteArrayToLimbs(api, circuit.Hash[:])
+	if err != nil {
+		return err
 	}
-	// Since sizeFr = 32 bytes and sha256 is 32 bytes then we can skip the check for len(hash) > sizeFr
-	fmt.Println("varHash: ", varHash)
+
+	fmt.Println("HashLimbs: ", HashLimbs)
+	fmt.Println("circuit.Message: ", circuit.Message)
+	fmt.Println("circuit.Message.lIMBS: ", circuit.Message.Limbs)
+
+	// Compare to circuit.Message (compare each Limb)
+	for i := 0; i < len(HashLimbs); i++ {
+		api.AssertIsEqual(HashLimbs[i], circuit.Message.Limbs[i])
+	}	
 
 	// Since the max output of sha 256 would be 256 bits of 1s which can be expressed in 256 bits
 	// then therefore when substracting to sizeFrBits = 256, in the worst case we would get excess := 0
