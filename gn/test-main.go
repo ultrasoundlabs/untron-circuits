@@ -156,6 +156,9 @@ func (circuit *sha2Circuit) Define(api frontend.API) error {
 type tronBlockCircuit struct {
 	//NewBlockID  [32]byte
 	//PrevBlockID [32]byte
+	// TODO: 	Set to 27 and import it from some file. Ideally add to witness as []uints.U8 and then convert to limbs
+	// 			using byteArrayToLimbs method. Then just compare limbs
+	PublicKeyAllowList	[2]ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr] `gnark:",public"`
 	PublicKey   		ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]
 	RawData 			[]uints.U8 `gnark:",public"`
 	Hash		 		[32]uints.U8
@@ -165,9 +168,46 @@ type tronBlockCircuit struct {
 }
 
 func (circuit *tronBlockCircuit) Define(api frontend.API) error {
-	// TODO: Check if circuit.PublicKey is in a list of fixed values
-	// To check if PK is in a list of values:
-	// https://github.com/Consensys/gnark/discussions/1070
+	// TODO: Check that the public list of PKs contains a list of different PKs
+
+	blockPublicKeyXLimbs := circuit.PublicKey.X.Limbs
+	blockPublicKeyYLimbs := circuit.PublicKey.Y.Limbs
+
+	// TODO: See how to optimize (circuit-breakers? / continue)
+	var prodEqualPublicKey frontend.Variable = 1
+	for i := 0; i < len(circuit.PublicKeyAllowList); i++ {
+		possiblePublicKeyXLimbs := circuit.PublicKeyAllowList[i].X.Limbs
+		possiblePublicKeyYLimbs := circuit.PublicKeyAllowList[i].Y.Limbs
+
+		var sumEqualPublicKey frontend.Variable = 0	
+		// Check X Limbs
+		for j := 0; j < len(blockPublicKeyXLimbs); j++ {
+			// Adds 1 iif blockPublicKeyXLimbs[j] != possiblePublicKeyXLimbs[j]
+			sumEqualPublicKey = api.Add(
+				sumEqualPublicKey, 
+				// https://github.com/Consensys/gnark/discussions/1070
+				api.Sub(1, api.IsZero(api.Sub(blockPublicKeyXLimbs[j], possiblePublicKeyXLimbs[j]))),
+			)
+		}
+
+		// Check Y Limbs
+		for j := 0; j < len(blockPublicKeyYLimbs); j++ {
+			// Adds 1 iif blockPublicKeyYLimbs[j] != possiblePublicKeyYLimbs[j]
+			sumEqualPublicKey = api.Add(
+				sumEqualPublicKey, 
+				api.Sub(1, api.IsZero(api.Sub(blockPublicKeyYLimbs[j], possiblePublicKeyYLimbs[j]))),
+			)
+		}
+
+		fmt.Println("sumEqualPublicKey: ", sumEqualPublicKey)
+		fmt.Println("prodEqualPublicKey: ", prodEqualPublicKey)
+
+		// If for all j, each limb is equal then sumEqualPublicKey should be equal to 0
+		prodEqualPublicKey = api.Mul(prodEqualPublicKey, sumEqualPublicKey)
+	}
+
+	// Assert that prodEqualPublicKey must be equal to 0 (i.e the public key is in the list)
+	api.AssertIsEqual(prodEqualPublicKey, 0)
 
 	// Create circuit that checks that sha256(circuit.RawData) == circuit.Hash
 	hashCircuit := sha2Circuit{
@@ -176,35 +216,17 @@ func (circuit *tronBlockCircuit) Define(api frontend.API) error {
 	}
 	hashCircuit.Define(api)
 
-	// Options
-	// #1
+	// Note: Since sha256 output is 256 bits and sec256k1 is 256 bits, then there is no need to check for excess
 	// Convert Circuit.Hash to Limbs (little endian)
 	var HashLimbs, err = byteArrayToLimbs(api, circuit.Hash[:])
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("HashLimbs: ", HashLimbs)
-	fmt.Println("circuit.Message: ", circuit.Message)
-	fmt.Println("circuit.Message.lIMBS: ", circuit.Message.Limbs)
-
 	// Compare to circuit.Message (compare each Limb)
 	for i := 0; i < len(HashLimbs); i++ {
 		api.AssertIsEqual(HashLimbs[i], circuit.Message.Limbs[i])
 	}	
-
-	// Since the max output of sha 256 would be 256 bits of 1s which can be expressed in 256 bits
-	// then therefore when substracting to sizeFrBits = 256, in the worst case we would get excess := 0
-	// But else this would always be negative, so we can also ignore that excess check
-
-	// We only need to check this:
-	// circuit.Message := new(big.Int).SetBytes(circuit.Hash)
-
-	// Enforce the constraint:
-	//api.AssertIsEqual(circuit.Message, hashToInt(circuit.Hash))
-
-	// Note: The issue that we had before was that sigEcdsa.HashToInt had sizeFrBits = 254 (for bn254 curve) and therefore
-	// the excess was positive when it shouldnt be because we were actually doing a ecdsa verify in secp256k1!
 
 	circuit.PublicKey.Verify(api, sw_emulated.GetSecp256k1Params(), &circuit.Message, &circuit.Signature)
 	return nil
@@ -234,6 +256,16 @@ func main() {
 		assignment := &tronBlockCircuit{
 			//NewBlockID:  [32]byte(block.NewBlockID),
 			//PrevBlockID: [32]byte(block.PrevBlockID),
+			PublicKeyAllowList: [2]ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]{
+				{
+					X: emulated.ValueOf[emulated.Secp256k1Fp](pubx),
+					Y: emulated.ValueOf[emulated.Secp256k1Fp](puby),
+				},
+				{
+					X: emulated.ValueOf[emulated.Secp256k1Fp](puby),
+					Y: emulated.ValueOf[emulated.Secp256k1Fp](pubx),
+				},
+			},
 			PublicKey: ecdsa.PublicKey[emulated.Secp256k1Fp, emulated.Secp256k1Fr]{
 				X: emulated.ValueOf[emulated.Secp256k1Fp](pubx),
 				Y: emulated.ValueOf[emulated.Secp256k1Fp](puby),
