@@ -1,6 +1,15 @@
 # Untron Circuits
 This repository holds the circuits that will be used for the Untron.finance project
 
+## Setup
+
+Clone the repository and then run
+```
+go mod tidy
+```
+
+To install dependencies
+
 ## Development
 
 For development, use the test package directly
