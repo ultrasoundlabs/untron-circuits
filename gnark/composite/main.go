@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"flag"
-	"fmt"
 	"math/big"
 
 	"untron-circuits/common"
@@ -91,7 +90,6 @@ func (circuit *tronBlocksCircuit) Define(api frontend.API) error {
 		}
 
 		// Assert that prodEqualPublicKey must be equal to 0 (i.e the public key is in the list)
-		fmt.Println("prodEqualPublicKey: ", prodEqualPublicKey)
 		api.AssertIsEqual(prodEqualPublicKey, 0)
 
 		// Create circuit that checks that sha256(circuit.RawData) == circuit.Hash
